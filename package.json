@@ -1,0 +1,24 @@
+{
+  "name": "ocsigma",
+  "version": "1.0.0",
+  "description": "Sistema de procesamiento de Ordenes de Compra",
+  "main": "server/index.js",
+  "scripts": {
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "server": "cd server && node index.js",
+    "client": "cd client && npm start",
+    "install-all": "npm install && cd server && npm install && cd ../client && npm install",
+    "build": "cd client && npm run build",
+    "build-all": "npm run install-all && npm run build",
+    "start": "cross-env NODE_ENV=production node server/index.js",
+    "start:dev": "npm run dev"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3"
+  }
+}
+

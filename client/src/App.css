@@ -1,0 +1,23 @@
+.container {
+  max-width: 1200px;
+}
+
+.list-group-item {
+  padding: 0.75rem 1rem;
+}
+
+.form-check-input {
+  margin-top: 0.4rem;
+}
+
+.modal {
+  z-index: 1050;
+}
+
+pre {
+  font-size: 0.875rem;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+
