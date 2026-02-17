@@ -1,0 +1,57 @@
+# Este archivo especifica archivos que se ignoran intencionalmente por gcloud
+# No se subirán al proyecto de Google Cloud
+
+# Node modules
+node_modules/
+client/node_modules/
+server/node_modules/
+
+# Carpetas de datos locales
+OCs/
+OCSProcesadas/
+OCSResult/
+SIGMA/
+
+# Logs
+*.log
+extraction.log
+
+# Archivos temporales
+.tmp/
+tmp/
+temp/
+
+# Git
+.git/
+.gitignore
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Build local del cliente (se construye en Cloud Build)
+client/build/
+
+# Scripts locales
+start.bat
+start.sh
+start.zip
+
+# Archivos de documentación (excepto README)
+INSTALACION.md
+DISTRIBUCION.md
+
+# Tests
+test/
+tests/
+__tests__/
+*.test.js
+*.spec.js
+
+# Archivos de configuración local
+.env
+.env.local

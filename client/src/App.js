@@ -16,6 +16,8 @@ function App() {
   const [csvFiles, setCsvFiles] = useState([]);
   const [loadingCsvFiles, setLoadingCsvFiles] = useState(false);
   const [error, setError] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadSuccess, setUploadSuccess] = useState(null);
 
   useEffect(() => {
     loadFiles();
@@ -138,12 +140,65 @@ function App() {
   const handleCsvDoubleClick = async (filename) => {
     try {
       // Construir URL del archivo CSV
-      const csvUrl = `http://localhost:3001/api/csv-file/${encodeURIComponent(filename)}`;
+      const csvUrl = `/api/csv-file/${encodeURIComponent(filename)}`;
       // Abrir en nueva pestaña
       window.open(csvUrl, '_blank');
     } catch (err) {
       console.error('Error abriendo archivo CSV:', err);
       setError('Error al abrir el archivo CSV: ' + (err.message || 'Error desconocido'));
+    }
+  };
+
+  const handleFileUpload = async (event) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    setUploading(true);
+    setError(null);
+    setUploadSuccess(null);
+
+    try {
+      const uploadPromises = Array.from(files).map(async (file) => {
+        // Verificar que sea PDF
+        if (!file.name.toLowerCase().endsWith('.pdf')) {
+          throw new Error(`${file.name} no es un archivo PDF`);
+        }
+
+        // Convertir a base64
+        const reader = new FileReader();
+        return new Promise((resolve, reject) => {
+          reader.onload = async () => {
+            try {
+              const base64 = reader.result.split(',')[1];
+              const response = await axios.post('/api/upload', {
+                filename: file.name,
+                filedata: base64
+              }, {
+                timeout: 60000 // 1 minuto
+              });
+              resolve(response.data);
+            } catch (err) {
+              reject(err);
+            }
+          };
+          reader.onerror = () => reject(new Error(`Error leyendo ${file.name}`));
+          reader.readAsDataURL(file);
+        });
+      });
+
+      await Promise.all(uploadPromises);
+      setUploadSuccess(`${files.length} archivo(s) subido(s) exitosamente`);
+      
+      // Recargar lista de archivos
+      await loadFiles();
+      
+      // Limpiar el input
+      event.target.value = '';
+    } catch (err) {
+      console.error('Error subiendo archivos:', err);
+      setError('Error al subir archivos: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -154,19 +209,61 @@ function App() {
           <h1 className="mb-4">Sistema de Procesamiento de Ordenes de Compra</h1>
           
           {error && (
-            <div className="alert alert-danger" role="alert">
+            <div className="alert alert-danger alert-dismissible fade show" role="alert">
               {error}
+              <button type="button" className="btn-close" onClick={() => setError(null)}></button>
             </div>
           )}
 
+          {uploadSuccess && (
+            <div className="alert alert-success alert-dismissible fade show" role="alert">
+              {uploadSuccess}
+              <button type="button" className="btn-close" onClick={() => setUploadSuccess(null)}></button>
+            </div>
+          )}
+
+          {/* Área de subida de archivos */}
+          <div className="card mb-4">
+            <div className="card-header bg-primary text-white">
+              <h5 className="mb-0">📤 Subir Archivos PDF</h5>
+            </div>
+            <div className="card-body">
+              <div className="mb-3">
+                <label htmlFor="fileInput" className="form-label">
+                  Selecciona uno o más archivos PDF para subir
+                </label>
+                <input
+                  type="file"
+                  className="form-control"
+                  id="fileInput"
+                  accept=".pdf"
+                  multiple
+                  onChange={handleFileUpload}
+                  disabled={uploading}
+                />
+                <div className="form-text">
+                  Puedes seleccionar múltiples archivos PDF a la vez
+                </div>
+              </div>
+              {uploading && (
+                <div className="text-center py-3">
+                  <div className="spinner-border text-primary" role="status">
+                    <span className="visually-hidden">Subiendo...</span>
+                  </div>
+                  <p className="mt-2 text-muted">Subiendo archivos...</p>
+                </div>
+              )}
+            </div>
+          </div>
+
           <div className="card">
             <div className="card-header d-flex justify-content-between align-items-center">
-              <h5 className="mb-0">Archivos PDF en carpeta OCs</h5>
+              <h5 className="mb-0">Archivos PDF disponibles para procesar</h5>
               <button 
                 className="btn btn-sm btn-outline-secondary" 
                 onClick={loadFiles}
               >
-                Actualizar
+                🔄 Actualizar
               </button>
             </div>
             <div className="card-body">

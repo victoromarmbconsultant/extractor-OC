@@ -4,13 +4,14 @@ const fs = require('fs-extra');
 const path = require('path');
 const pdfParse = require('pdf-parse');
 const { extractPDFData } = require('./pdfExtractor');
+const storage = require('./storageService');
 
 // Detectar si estamos en modo producción (servir frontend compilado)
 const isProduction = process.env.NODE_ENV === 'production';
 const clientBuildPath = path.join(__dirname, '..', 'client', 'build');
 
 // Función para generar CSV a partir del JSON
-async function generateCSV(results, outputFolder) {
+async function generateCSV(results) {
   // Definir encabezados según la imagen proporcionada
   const headers = [
     'Orden',     // Primera columna: número de orden
@@ -92,22 +93,20 @@ async function generateCSV(results, outputFolder) {
   const dateStr = now.toISOString().split('T')[0].replace(/-/g, '-'); // YYYY-MM-DD
   let baseFileName = `OC-procesadas-${dateStr}`;
   let fileName = `${baseFileName}.csv`;
-  let csvPath = path.join(outputFolder, fileName);
   
   // Verificar si el archivo ya existe y agregar consecutivo si es necesario
   let counter = 1;
-  while (await fs.pathExists(csvPath)) {
+  while (await storage.fileExists('results', fileName)) {
     fileName = `${baseFileName}-${counter}.csv`;
-    csvPath = path.join(outputFolder, fileName);
     counter++;
   }
 
   // Guardar archivo CSV con BOM UTF-8 para que Excel lea correctamente los acentos
   // El BOM (Byte Order Mark) es necesario para que Excel reconozca UTF-8
   const BOM = '\uFEFF';
-  await fs.writeFile(csvPath, BOM + csvContent, 'utf8');
+  await storage.saveFile('results', fileName, BOM + csvContent);
 
-  return csvPath;
+  return fileName;
 }
 
 // Configurar logging a archivo
@@ -120,59 +119,79 @@ const log = (message) => {
 };
 
 const app = express();
-const PORT = 3001;
+// Cloud Run proporciona el puerto mediante variable de entorno PORT
+const PORT = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
+// Aumentar límite para archivos grandes (50MB)
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-const OCS_FOLDER = path.join(__dirname, '..', 'OCs');
-const OCS_PROCESSED_FOLDER = path.join(__dirname, '..', 'OCSProcesadas');
-const OCS_RESULT_FOLDER = path.join(__dirname, '..', 'OCSResult');
+// Endpoint para subir archivos PDF
+app.post('/api/upload', async (req, res) => {
+  try {
+    const { filename, filedata } = req.body;
+    
+    if (!filename || !filedata) {
+      return res.status(400).json({ error: 'Faltan datos del archivo (filename y filedata requeridos)' });
+    }
 
-// Asegurar que las carpetas existan
-fs.ensureDirSync(OCS_FOLDER);
-fs.ensureDirSync(OCS_PROCESSED_FOLDER);
-fs.ensureDirSync(OCS_RESULT_FOLDER);
+    // Verificar que sea un archivo PDF
+    if (!filename.toLowerCase().endsWith('.pdf')) {
+      return res.status(400).json({ error: 'Solo se permiten archivos PDF' });
+    }
+
+    // Convertir base64 a buffer
+    const buffer = Buffer.from(filedata, 'base64');
+    
+    // Guardar en Cloud Storage o carpeta local
+    await storage.uploadFile('ocs', filename, buffer);
+    
+    log(`Archivo subido exitosamente: ${filename}`);
+    
+    res.json({ 
+      success: true, 
+      message: `Archivo ${filename} subido correctamente`,
+      filename: filename
+    });
+  } catch (error) {
+    console.error('Error subiendo archivo:', error);
+    log(`Error subiendo archivo: ${error.message}`);
+    res.status(500).json({ error: 'Error al subir el archivo', details: error.message });
+  }
+});
 
 // Endpoint para listar archivos PDF
 app.get('/api/files', async (req, res) => {
   try {
-    const files = await fs.readdir(OCS_FOLDER);
-    const pdfFiles = files.filter(file => 
-      file.toLowerCase().endsWith('.pdf')
-    );
+    const pdfFiles = await storage.listFiles('ocs', '.pdf');
     res.json(pdfFiles);
   } catch (error) {
     console.error('Error leyendo archivos:', error);
-    res.status(500).json({ error: 'Error al leer la carpeta OCs' });
+    res.status(500).json({ error: 'Error al leer los archivos PDF pendientes' });
   }
 });
 
 // Endpoint para listar archivos PDF procesados
 app.get('/api/processed-files', async (req, res) => {
   try {
-    const files = await fs.readdir(OCS_PROCESSED_FOLDER);
-    const pdfFiles = files.filter(file => 
-      file.toLowerCase().endsWith('.pdf')
-    ).sort().reverse(); // Ordenar por nombre (más recientes primero)
+    const pdfFiles = await storage.listFiles('processed', '.pdf');
     res.json(pdfFiles);
   } catch (error) {
     console.error('Error leyendo archivos procesados:', error);
-    res.status(500).json({ error: 'Error al leer la carpeta OCSProcesadas' });
+    res.status(500).json({ error: 'Error al leer los archivos PDF procesados' });
   }
 });
 
 // Endpoint para listar archivos CSV
 app.get('/api/csv-files', async (req, res) => {
   try {
-    const files = await fs.readdir(OCS_RESULT_FOLDER);
-    const csvFiles = files.filter(file => 
-      file.toLowerCase().endsWith('.csv')
-    ).sort().reverse(); // Ordenar por nombre (más recientes primero)
+    const csvFiles = await storage.listFiles('results', '.csv');
     res.json(csvFiles);
   } catch (error) {
     console.error('Error leyendo archivos CSV:', error);
-    res.status(500).json({ error: 'Error al leer la carpeta OCSResult' });
+    res.status(500).json({ error: 'Error al leer los archivos CSV' });
   }
 });
 
@@ -180,16 +199,16 @@ app.get('/api/csv-files', async (req, res) => {
 app.get('/api/csv-file/:filename', async (req, res) => {
   try {
     const filename = decodeURIComponent(req.params.filename);
-    const filePath = path.join(OCS_RESULT_FOLDER, filename);
-    
-    // Verificar que el archivo existe
-    if (!await fs.pathExists(filePath)) {
-      return res.status(404).json({ error: 'Archivo no encontrado' });
-    }
     
     // Verificar que es un archivo CSV
     if (!filename.toLowerCase().endsWith('.csv')) {
       return res.status(400).json({ error: 'El archivo no es un CSV válido' });
+    }
+    
+    // Verificar que el archivo existe
+    const exists = await storage.fileExists('results', filename);
+    if (!exists) {
+      return res.status(404).json({ error: 'Archivo no encontrado' });
     }
     
     // Enviar el archivo con el tipo MIME correcto
@@ -197,7 +216,7 @@ app.get('/api/csv-file/:filename', async (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     
     // Leer y enviar el archivo
-    const fileContent = await fs.readFile(filePath, 'utf8');
+    const fileContent = await storage.readFileAsString('results', filename);
     res.send(fileContent);
   } catch (error) {
     console.error('Error sirviendo archivo CSV:', error);
@@ -219,16 +238,15 @@ app.post('/api/process', async (req, res) => {
 
     for (const filename of files) {
       try {
-        const filePath = path.join(OCS_FOLDER, filename);
-        
         // Verificar que el archivo existe
-        if (!await fs.pathExists(filePath)) {
+        const exists = await storage.fileExists('ocs', filename);
+        if (!exists) {
           errors.push(`Archivo no encontrado: ${filename}`);
           continue;
         }
 
-        // Leer y parsear el PDF
-        const dataBuffer = await fs.readFile(filePath);
+        // Leer y parsear el PDF desde Cloud Storage o carpeta local
+        const dataBuffer = await storage.readFileAsBuffer('ocs', filename);
         const pdfData = await pdfParse(dataBuffer);
         
         // Extraer información del PDF
@@ -291,9 +309,8 @@ app.post('/api/process', async (req, res) => {
             };
           }
 
-          // Mover archivo a carpeta procesada
-          const destPath = path.join(OCS_PROCESSED_FOLDER, filename);
-          await fs.move(filePath, destPath, { overwrite: true });
+          // Mover archivo a bucket/carpeta procesada
+          await storage.moveFile('ocs', 'processed', filename);
         } else {
           errors.push(`No se pudo extraer el número de orden de: ${filename}`);
         }
@@ -304,14 +321,14 @@ app.post('/api/process', async (req, res) => {
     }
 
     // Guardar JSON resultante
-    const jsonPath = path.join(OCS_RESULT_FOLDER, 'DataOCS.json');
-    await fs.writeJson(jsonPath, results, { spaces: 2 });
+    const jsonContent = JSON.stringify(results, null, 2);
+    await storage.saveFile('results', 'DataOCS.json', jsonContent);
 
     // Generar CSV a partir del JSON
-    let csvPath = null;
+    let csvFileName = null;
     try {
-      csvPath = await generateCSV(results, OCS_RESULT_FOLDER);
-      log(`CSV generado exitosamente: ${csvPath}`);
+      csvFileName = await generateCSV(results);
+      log(`CSV generado exitosamente: ${csvFileName}`);
     } catch (csvError) {
       log(`Error al generar CSV: ${csvError.message}`);
       errors.push(`Error al generar CSV: ${csvError.message}`);
@@ -327,7 +344,7 @@ app.post('/api/process', async (req, res) => {
     res.json({
       success: true,
       data: results,
-      csvPath: csvPath,
+      csvPath: csvFileName,
       errors: errors.length > 0 ? errors : undefined,
       debug: debugInfo
     });
@@ -354,12 +371,21 @@ if (isProduction && fs.existsSync(clientBuildPath)) {
 }
 
 app.listen(PORT, () => {
+  const envInfo = storage.getEnvironmentInfo();
   console.log(`\n========================================`);
-  console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
-  console.log(`📁 Carpetas de trabajo:`);
-  console.log(`   - OCs: ${OCS_FOLDER}`);
-  console.log(`   - OCSProcesadas: ${OCS_PROCESSED_FOLDER}`);
-  console.log(`   - OCSResult: ${OCS_RESULT_FOLDER}`);
+  console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
+  console.log(`📦 Entorno: ${envInfo.isCloud ? 'CLOUD RUN' : 'LOCAL'}`);
+  if (envInfo.isCloud) {
+    console.log(`☁️ Cloud Storage Buckets:`);
+    console.log(`   - OCs: ${envInfo.buckets.ocs}`);
+    console.log(`   - Procesadas: ${envInfo.buckets.processed}`);
+    console.log(`   - Resultados: ${envInfo.buckets.results}`);
+  } else {
+    console.log(`📁 Carpetas locales:`);
+    console.log(`   - OCs: ${envInfo.localFolders.ocs}`);
+    console.log(`   - Procesadas: ${envInfo.localFolders.processed}`);
+    console.log(`   - Resultados: ${envInfo.localFolders.results}`);
+  }
   if (isProduction) {
     console.log(`✅ Modo: PRODUCCIÓN (Frontend integrado)`);
   } else {

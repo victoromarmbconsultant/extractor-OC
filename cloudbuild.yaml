@@ -1,0 +1,46 @@
+# Cloud Build configuration para OCsigma
+# Este archivo automatiza el build y deploy a Cloud Run
+
+steps:
+  # Paso 1: Build de la imagen Docker
+  - name: 'gcr.io/cloud-builders/docker'
+    args: 
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/ocsigma:latest'
+      - '.'
+
+  # Paso 2: Push de la imagen al Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: 
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/ocsigma:latest'
+
+  # Paso 3: Deploy a Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'ocsigma'
+      - '--image=gcr.io/$PROJECT_ID/ocsigma:latest'
+      - '--platform=managed'
+      - '--region=us-central1'
+      - '--allow-unauthenticated'
+      - '--memory=512Mi'
+      - '--cpu=1'
+      - '--timeout=300s'
+      - '--max-instances=3'
+      - '--set-env-vars=NODE_ENV=production,GCS_BUCKET_OCS=extractor-ocr-ocs,GCS_BUCKET_PROCESSED=extractor-ocr-procesadas,GCS_BUCKET_RESULTS=extractor-ocr-results,GOOGLE_CLOUD_PROJECT=$PROJECT_ID'
+
+# Imágenes a guardar en Container Registry
+images:
+  - 'gcr.io/$PROJECT_ID/ocsigma:latest'
+
+# Timeout total del build (20 minutos)
+timeout: 1200s
+
+# Opciones adicionales
+options:
+  machineType: 'E2_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY
